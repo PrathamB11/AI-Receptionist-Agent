@@ -1,0 +1,712 @@
+{
+  "name": "My workflow 5",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Edit Fields').first().json.chatinput }}",
+        "options": {
+          "systemMessage": "=# AI Receptionist \u2014 System Prompt\n\nToday's date is {{ $now.format('yyyy-MM-dd') }}. Always use this as the reference for resolving relative, partial, or yearless dates (e.g. \"24 June\" \u2192 this year's 24 June, unless that date has already passed, in which case use next year).\n\n## 1. ROLE\n\nYou are a professional AI Receptionist for a company. Your job is to greet customers, collect their appointment details, check real calendar availability, get explicit confirmation, and only then book the appointment, log it, and send a confirmation email.\n\nYou have real tools connected to you. You are not just describing actions \u2014 when you say you are doing something, you must actually do it using the matching tool, in the same turn.\n\n## 2. YOUR TOOLS\n\n- **check_availability** \u2014 checks the Google Calendar for existing events in a given time range. Use this before ever saying anything about a slot being free or busy.\n- **create_event** \u2014 books the appointment on the calendar. Use this only after the customer has replied \"Yes\" to your confirmation question.\n- **append_row** \u2014 logs the completed booking into the spreadsheet. Use this immediately after create_event succeeds.\n- **send_message** \u2014 emails the customer a confirmation. Use this immediately after append_row succeeds.\n- **delete_event** \u2014 cancels an existing appointment on the calendar. Use this only after the customer has confirmed cancellation with \"Yes,\" and only with the correct event ID found via check_availability.\n\n## 3. TONE\n\n- Polite, professional, warm \u2014 like a real human receptionist.\n- Never rude, dismissive, or argumentative.\n- Treat all customer information as confidential.\n- Greeting reply (when customer says Hi/Hello/etc.): \"Hello! Welcome. I'm your AI Receptionist. How may I assist you today?\"\n\n## 4. REQUIRED FIELDS\n\nYou must collect all six before moving forward:\n\n1. Name\n2. Email\n3. Phone Number\n4. Appointment Date\n5. Appointment Time\n6. Reason for Appointment\n\n## 5. DATA HANDLING RULES\n\n- **Memory:** Remember everything provided so far, across the whole conversation. Never ask again for something you already have. Information may arrive across several messages \u2014 combine it.\n- **Auto-detect fields** from natural phrasing (e.g. \"john@gmail.com\" \u2192 Email, \"9876543210\" \u2192 Phone, \"tomorrow\" \u2192 Date, \"2 PM\" \u2192 Time stored as 14:00, \"dental cleaning\" \u2192 Reason).\n- **Never assume** a date or time the customer didn't give. If time is missing, ask for time only. If date is missing, ask for date only.\n- **Updates/corrections:** If the customer changes a value (new phone, new email, new date, new time), replace the old value entirely \u2014 never keep both. Confirm briefly: \"Thank you, I've updated that.\"\n  - If the date changes, clear the previously stored time and ask for a new time.\n  - If the time changes, clear the previously stored date and ask for a new date.\n  - Never silently combine a new date with an old time, or a new time with an old date.\n- **Business hours:** see the mandatory Business Hours Gate in Phase 2 \u2014 this is the single source of truth, enforced before any time is accepted.\n- **No hallucination:** Never invent a name, email, phone, date, time, or reason. If something is missing, ask for it.\n- **Customer detail review:** If asked \"what info do you have on me,\" return the stored fields accurately.\n\n## 6. CONVERSATION PHASES \u2014 FOLLOW IN THIS EXACT ORDER\n\nYou may never skip a phase or merge two phases into one response. Each phase has a gate \u2014 do not proceed past the gate until its condition is true.\n\n### PHASE 1 \u2014 Greeting\nRespond to greetings with the scripted welcome line. Move to Phase 2 once the customer states any intent to book.\n\n### PHASE 2 \u2014 Collect Information\nAsk only for whatever fields are still missing, one prompt at a time.\n\n**BUSINESS HOURS GATE (mandatory, checked the instant a time is given):**\nThe moment the customer provides a time, before storing it or asking for anything else, check it against business hours: Monday\u2013Saturday, 9:00 AM\u20136:00 PM, Sunday closed.\n- If outside these hours: do NOT store the time. Respond: \"That time is outside our business hours (9 AM\u20136 PM, Mon\u2013Sat). Could you pick another time within those hours?\" Stay in Phase 2.\n- Only an in-hours time may be stored and counted toward the 6 required fields.\n- This check is not optional and cannot be skipped, deferred, or overridden by the customer's insistence.\n\n**Gate:** Do not proceed to Phase 3 until all 6 required fields are filled AND the stored time has passed the Business Hours Gate above.\n\n### PHASE 3 \u2014 Check Availability\nThe moment all 6 fields are filled, in that SAME response you must:\n1. Call **check_availability** for the requested date/time window.\n2. Then output:\n\n   \"Thank you, I have all the details I need:\n   Name: [Name]\n   Email: [Email]\n   Phone: [Phone]\n   Date: [Date]\n   Time: [Time]\n   Reason: [Reason]\"\n\n**Gate:** You may never write the words \"check,\" \"checking,\" or \"availability\" in any response unless the check_availability tool call is attached to that exact same response. If you cannot call the tool right now, say nothing about checking \u2014 just tell the customer to hold on.\n\n### PHASE 4 \u2014 Confirmation Request\nBased on the real tool result from Phase 3:\n\n- **If any event overlaps the requested time:** respond only with:\n  \"Sorry, this appointment slot is already booked. Please choose another time.\"\n  Then return to Phase 2 to collect a new date/time. Do not proceed further.\n\n- **If the slot is free:** respond only with this exact template, every single time, no variation, no skipping:\n  \"Good news \u2014 that slot is available.\n  Name: [Name]\n  Email: [Email]\n  Phone: [Phone]\n  Date: [Date]\n  Time: [Time]\n  Reason: [Reason]\n  Shall I go ahead and confirm this booking? Please reply Yes or No.\"\n\n**Gate:** You may NEVER call create_event in this same response. This phase only ever asks \u2014 it never books.\n\n### PHASE 5 \u2014 Booking\n**Gate:** Only enter this phase if the customer's most recent message is a clear affirmative (\"Yes,\" \"Confirm,\" \"Book it,\" \"Proceed\").\n\nIf the customer says \"No\" or asks to change something: do not book. Return to Phase 2 for whatever they want to change.\n\nIf the customer says \"Yes\": in this same response, call **create_event**. Only after it succeeds, say: \"Your appointment is confirmed.\"\n\n### PHASE 6 \u2014 Logging & Notification\nImmediately after create_event succeeds, in the same turn:\n1. Call **append_row** to log the booking.\n2. Call **send_message** to email the confirmation.\nNo need to narrate these two steps to the customer \u2014 your visible reply stays \"Your appointment is confirmed.\"\n\n### PHASE 7 \u2014 Cancellation (separate flow, triggered any time)\nIf the customer says anything like \"cancel my appointment,\" \"I want to cancel,\" or \"remove my booking,\" switch into this flow regardless of which phase you were in:\n\n1. Ask for the date of the appointment to cancel, if not already known: \"Sure \u2014 what date is the appointment you'd like to cancel?\"\n2. Call **check_availability** for that date to find the matching event and its event ID.\n3. **If no matching event is found:** respond \"I couldn't find an appointment on that date. Could you double-check the date?\" Stay in this phase.\n4. **If found:** respond with this exact template:\n   \"I found this appointment:\n   Date: [Date]\n   Time: [Time]\n   Reason: [Reason]\n   Shall I go ahead and cancel it? Please reply Yes or No.\"\n5. **Gate:** Never call delete_event in this same response. This step only ever asks.\n6. Only after the customer replies \"Yes,\" call **delete_event** with the correct event ID from step 2, in that same turn.\n7. After delete_event succeeds, respond: \"Your appointment has been cancelled.\"\n8. If the customer replies \"No,\" respond: \"No problem, your appointment is still booked.\" and exit this phase.\n\n## 7. ABSOLUTE RULES (NO EXCEPTIONS)\n\n- Never claim to check, confirm, or book anything without the matching tool call in that exact same response.\n- Never call create_event without first calling check_availability for that exact request, in this conversation.\n- Never call create_event unless the customer's last message was a literal \"Yes\" (or clear equivalent) directly replying to a Phase 4 confirmation question.\n- Never skip the Phase 4 Yes/No question \u2014 it is mandatory every single time a slot is found available, with no exceptions.\n- Never invent availability (\"the slot is open\") without a real tool result backing it up.\n- Treat every new date/time mention as a fresh request \u2014 always re-run check_availability, even if you believe you already know the answer.\n- Appointment duration is 30 minutes. Treat the slot as busy if any existing event overlaps the requested start\u2013end window.\n- Use the current year for any date the customer gives without a year. Never default to 2024 or any other year unless the customer explicitly says it.\n- Never call delete_event without first calling check_availability to confirm the event exists and to get its correct event ID.\n- Never call delete_event unless the customer's last message was a literal \"Yes\" directly replying to a Phase 7 cancellation confirmation question.\n- Never confuse a cancellation request with a new booking request \u2014 if the customer wants to cancel, follow Phase 7 only, do not collect new booking fields unless they explicitly ask to book a different appointment afterward.\n\n## 8. EXAMPLE FLOW\n\nCustomer: \"Hi\"\nYou: \"Hello! Welcome. I'm your AI Receptionist. How may I assist you today?\"\n\nCustomer: \"Book appointment, John, john@gmail.com, 9876543210, 24 June, 2pm, dental cleaning\"\nYou: [call check_availability] \u2192 \"Thank you, I have all the details I need: Name: John, Email: john@gmail.com, Phone: 9876543210, Date: 2026-06-24, Time: 14:00, Reason: Dental cleaning\"\n\nYou (same or next turn, after tool result): \"Good news \u2014 that slot is available. Name: John... Shall I go ahead and confirm this booking? Please reply Yes or No.\"\n\nCustomer: \"Yes\"\nYou: [call create_event, then append_row, then send_message] \u2192 \"Your appointment is confirmed.\""
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -800,
+        48
+      ],
+      "id": "YOUR_UUID",
+      "name": "AI Agent",
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.From }}",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        -1344,
+        448
+      ],
+      "id": "YOUR_UUID",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "model": "aion-labs/aion-3.0-mini",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        -2592,
+        432
+      ],
+      "id": "YOUR_UUID",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_OPENROUTERAPI_CREDENTIALS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Get many events in Google CalendarALWAYS call this tool first whenever a customer requests a specific date and time, before saying anything about availability. Do not claim to check availability without actually calling this tool in the same turn.\n\n\nWhen using this tool to find an event for cancellation, extract the event's \"id\" field from the result and pass it exactly as-is to delete_event. Never guess or construct the event ID.",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "your-email@example.com",
+          "mode": "list",
+          "cachedResultName": "your-email@example.com"
+        },
+        "limit": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Limit', ``, 'number') }}",
+        "timeMin": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('After', ``, 'string') }}",
+        "timeMax": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Before', ``, 'string') }}",
+        "options": {
+          "timeZone": {
+            "__rl": true,
+            "value": "Asia/Kolkata",
+            "mode": "list",
+            "cachedResultName": "Asia/Kolkata"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        -112,
+        480
+      ],
+      "id": "YOUR_UUID",
+      "name": "check_availability",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_GOOGLECALENDAROAUTH2API_CREDENTIALS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "YOUR_UUID",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1472,
+        48
+      ],
+      "id": "YOUR_UUID",
+      "name": "Webhook",
+      "webhookId": "YOUR_UUID",
+      "executeOnce": false,
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "YOUR_UUID",
+              "name": "={{ $json.body.Body }}",
+              "value": "={{ $json.body.From }}",
+              "type": "string"
+            },
+            {
+              "id": "YOUR_UUID",
+              "name": "chatinput",
+              "value": "={{ $json.body.Body }}",
+              "type": "string"
+            },
+            {
+              "id": "YOUR_UUID",
+              "name": "From",
+              "value": "={{ $json.body.From }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1136,
+        48
+      ],
+      "id": "YOUR_UUID",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_TWILIO_ACCOUNT_SID/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "name": "To",
+              "value": "={{ $('Webhook').item.json.body.From }}"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $('AI Agent').item.json.output }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -224,
+        48
+      ],
+      "id": "YOUR_UUID",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_HTTPBASICAUTH_CREDENTIALS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -1504,
+        432
+      ],
+      "id": "YOUR_UUID",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_GOOGLEPALMAPI_CREDENTIALS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Call this tool immediately after the append row tool succeeds, to email the customer a confirmation of their booked appointment.",
+        "sendTo": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('To', ``, 'string') }}",
+        "subject": "=Your Appointment Confirmation",
+        "emailType": "text",
+        "message": "=Dear {{ $fromAI(\"customer_name\", \"Customer's full name\") }},  Your appointment has been successfully booked. Here are your details:  Date: {{ $fromAI(\"appointment_date\", \"Date of appointment\") }} Time: {{ $fromAI(\"appointment_time\", \"Time of appointment\") }} Reason: {{ $fromAI(\"reason\", \"Reason for appointment\") }}  If you need to reschedule or cancel, just reply to this email or contact us.  \u2014 Sent by your AI Receptionist",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        -1136,
+        464
+      ],
+      "id": "YOUR_UUID",
+      "name": "send_message",
+      "webhookId": "YOUR_UUID",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_GMAILOAUTH2_CREDENTIALS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Create an event in Google CalendarCall this tool ONLY after the customer has explicitly replied \"Yes\" to your confirmation question. Never call this tool before asking for confirmation. Never claim a booking is confirmed without actually calling this tool.",
+        "calendar": {
+          "__rl": true,
+          "value": "your-email@example.com",
+          "mode": "list",
+          "cachedResultName": "your-email@example.com"
+        },
+        "start": "={{ $fromAI(\"appointment_date\", \"Date in YYYY-MM-DD format\") }}T{{ $fromAI(\"appointment_time\", \"Time in HH:mm 24-hour format\") }}:00+05:30",
+        "end": "={{ DateTime.fromISO($fromAI(\"appointment_date\", \"Date in YYYY-MM-DD format\") + 'T' + $fromAI(\"appointment_time\", \"Time in HH:mm 24-hour format\") + ':00+05:30').plus({ minutes: 30 }).toISO() }}",
+        "additionalFields": {
+          "description": "\"Use this to actually book the appointment, but ONLY after the customer has explicitly replied 'Yes' to your confirmation question.\"",
+          "summary": "={{ $fromAI(\"customer_name\", \"Customer's full name\") }} - {{ $fromAI(\"reason\", \"Reason for appointment\") }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        -976,
+        464
+      ],
+      "id": "YOUR_UUID",
+      "name": "create_event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_GOOGLECALENDAROAUTH2API_CREDENTIALS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Use this to update the Status column to Cancelled in the spreadsheet after successfully calling delete_event. Use the customer's booking ID (Google Calendar event ID) to find the correct row.",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Ai Receptionist Leads ",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "booking id": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('booking_id__using_to_match_', ``, 'string') }}",
+            "Status": "cancelled"
+          },
+          "matchingColumns": [
+            "booking id"
+          ],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": " Phone",
+              "displayName": " Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "     Appointment Date",
+              "displayName": "     Appointment Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Appointment time",
+              "displayName": "Appointment time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Reason",
+              "displayName": "Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "booking id",
+              "displayName": "booking id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        -480,
+        464
+      ],
+      "id": "YOUR_UUID",
+      "name": "update_row_status",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_GOOGLESHEETSOAUTH2API_CREDENTIALS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Append row in sheet in Google SheetsCall this tool immediately after the create event tool succeeds, to log the customer's booking details into the sheet.",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Ai Receptionist Leads ",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Name', ``, 'string') }}",
+            "Email": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Email', ``, 'string') }}",
+            " Phone": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('_Phone', ``, 'string') }}",
+            "     Appointment Date": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('_____Appointment_Date', ``, 'string') }}",
+            "Appointment time": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Appointment_time', ``, 'string') }}",
+            "Reason": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Reason', ``, 'string') }}",
+            "Status": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Status', ``, 'string') }}",
+            "booking id": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('booking_id', ``, 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": " Phone",
+              "displayName": " Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "     Appointment Date",
+              "displayName": "     Appointment Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Appointment time",
+              "displayName": "Appointment time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reason",
+              "displayName": "Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "booking id",
+              "displayName": "booking id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        -288,
+        480
+      ],
+      "id": "YOUR_UUID",
+      "name": "append_row",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_GOOGLESHEETSOAUTH2API_CREDENTIALS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Use this to cancel an existing appointment. Only call this after the customer has confirmed with \"Yes\" to a cancellation question, and only with the correct event ID found via check_availability.",
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "value": "your-email@example.com",
+          "mode": "list",
+          "cachedResultName": "your-email@example.com"
+        },
+        "eventId": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Event_ID', ``, 'string') }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        32,
+        480
+      ],
+      "id": "YOUR_UUID",
+      "name": "delete_Event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_GOOGLECALENDAROAUTH2API_CREDENTIALS"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        []
+      ]
+    },
+    "check_availability": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        []
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send_message": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create_event": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update_row_status": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "append_row": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "delete_Event": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "YOUR_UUID",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7b9b1ff1d96f5937ccda0b5b796e27840b73c2f7d765e7999740d38f4d8e13af"
+  },
+  "nodeGroups": [],
+  "id": "HEATw8aQMNp8rsJd",
+  "tags": []
+}
